@@ -32,14 +32,22 @@ class RecommendationUseCase(
     private val normalizer: RatingNormalizer,
     private val jointScoreAggregator: JointScoreAggregator,
     @Value("\${recommendation.ml.minimum-samples:8}") private val minimumSamples: Int,
-    @Value("\${recommendation.vector-weight:0.15}") private val vectorWeight: Double
+    @Value("\${recommendation.vector-weight:0.15}") private val vectorWeight: Double,
+    private val models: com.gilrossi.movie_recommendation.recommendation.ModelLifecycleService,
+    private val catalog: com.gilrossi.movie_recommendation.discovery.CatalogDiscoveryService
 ) {
     suspend fun recommend(userId: Long, limit: Int = 20): List<RecommendationResult> {
         require(limit in 1..100) { "limit deve estar entre 1 e 100." }
+        return rank(userId).take(limit)
+    }
+
+    private suspend fun rank(userId: Long): List<RecommendationResult> {
+        if (!userRepository.existsById(userId)) throw UserNotFoundException()
+        catalog.ensureCandidates(listOf(userId))
         val context = prepare(userId)
         val directRatings = context.ratings.filter { it.targetType.isContent }
         val ratedContentIds = directRatings.mapNotNull(Rating::contentId).toSet()
-        val model = if (directRatings.size >= minimumSamples) trainAndSave(userId, context) else null
+        val model = models.trainedModel(userId)
 
         return context.signals.asSequence()
             .filterNot { it.content.id in ratedContentIds }
@@ -64,27 +72,25 @@ class RecommendationUseCase(
                 )
             }
             .sortedByDescending(RecommendationResult::score)
-            .take(limit)
             .toList()
     }
 
     suspend fun train(userId: Long): TrainedRecommendationModel {
-        val context = prepare(userId)
-        val directCount = context.ratings.count { it.targetType.isContent }
-        require(directCount >= minimumSamples) { "São necessários ao menos $minimumSamples ratings de filmes/séries para treinar." }
-        return trainAndSave(userId, context)
+        return models.train(userId)
     }
 
     suspend fun refreshProfile(userId: Long) {
-        val context = prepare(userId)
-        if (context.ratings.count { it.targetType.isContent } >= minimumSamples) trainAndSave(userId, context)
+        prepare(userId)
     }
 
     suspend fun recommendTogether(userIds: List<Long>, limit: Int = 20): List<JointRecommendationResult> {
         val distinctIds = userIds.distinct()
+        require(limit in 1..100) { "limit deve estar entre 1 e 100." }
         require(distinctIds.size >= 2) { "Informe ao menos dois usuários distintos." }
         require(distinctIds.size <= 20) { "No máximo 20 usuários por recomendação conjunta." }
-        val perUser = distinctIds.associateWith { recommend(it, 100).associateBy { recommendation -> recommendation.content.id } }
+        distinctIds.forEach { if (!userRepository.existsById(it)) throw UserNotFoundException() }
+        catalog.ensureCandidates(distinctIds)
+        val perUser = distinctIds.associateWith { rank(it).associateBy { recommendation -> recommendation.content.id } }
         val commonIds = perUser.values.map { it.keys }.reduce { common, ids -> common.intersect(ids) }
 
         return commonIds.map { contentId ->
@@ -111,13 +117,6 @@ class RecommendationUseCase(
             id?.let { it to values.map { rating -> normalizer.normalize(rating.value) }.average() }
         }.toMap()
         return Context(ratings, signals, popularity, similarities)
-    }
-
-    private fun trainAndSave(userId: Long, context: Context): TrainedRecommendationModel {
-        val dataset = datasetBuilder.build(context.ratings, context.signals, context.popularity)
-        val model = tensorflow.train(dataset)
-        tensorflow.save(userId, model)
-        return model
     }
 
     private data class Context(

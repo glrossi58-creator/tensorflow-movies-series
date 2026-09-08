@@ -17,12 +17,32 @@ import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientRequestException
 import org.springframework.web.reactive.function.client.WebClientResponseException
+import com.gilrossi.movie_recommendation.discovery.*
+import org.springframework.core.codec.DecodingException
 
 @Component
 class TmdbClientImpl(
     @Qualifier("tmdbWebClient") private val webClient: WebClient,
     @Value("\${tmdb.read-access-token:}") private val accessToken: String
 ) : TmdbClient {
+    override suspend fun searchUniversal(query: String, type: DiscoveryType?): TmdbDiscoveryResponse = execute(
+        webClient.get().uri { b -> b.path("/search/${when(type) { DiscoveryType.MOVIE -> "movie"; DiscoveryType.SERIES -> "tv"; DiscoveryType.PERSON -> "person"; else -> "multi" }}")
+            .queryParam("query", query).queryParam("include_adult", false).queryParam("language", "pt-BR").build() },
+        TmdbDiscoveryResponse::class.java
+    )
+
+    override suspend fun popular(type: DiscoveryType, page: Int): TmdbDiscoveryResponse = execute(
+        webClient.get().uri { b -> b.path("/${if (type == DiscoveryType.MOVIE) "movie" else "tv"}/popular")
+            .queryParam("page", page).queryParam("language", "pt-BR").build() }, TmdbDiscoveryResponse::class.java
+    )
+
+    override suspend fun getPersonDetails(tmdbId: Int): TmdbPersonDetails = execute(
+        webClient.get().uri("/person/{id}?language=pt-BR", tmdbId), TmdbPersonDetails::class.java
+    )
+
+    override suspend fun getPersonCredits(tmdbId: Int): TmdbPersonCredits = execute(
+        webClient.get().uri("/person/{id}/combined_credits", tmdbId), TmdbPersonCredits::class.java
+    )
 
     override suspend fun searchMovie(title: String): TmdbSearchResponse = execute(
         webClient.get().uri { builder ->
@@ -63,10 +83,18 @@ class TmdbClientImpl(
             throw TmdbResourceNotFoundException()
         } catch (exception: WebClientResponseException) {
             if (exception.causeChainContainsTimeout()) throw TmdbTimeoutException()
-            throw TmdbUnavailableException("TMDB respondeu com status ${exception.statusCode.value()}.")
+            throw TmdbUnavailableException(when (exception.statusCode.value()) {
+                401, 403 -> "O TMDB recusou o acesso. Verifique o token configurado no servidor."
+                429 -> "O TMDB recebeu muitas consultas. Tente novamente em alguns instantes."
+                else -> "TMDB respondeu com status ${exception.statusCode.value()}."
+            })
         } catch (exception: WebClientRequestException) {
             if (exception.causeChainContainsTimeout()) throw TmdbTimeoutException()
             throw TmdbUnavailableException()
+        } catch (_: DecodingException) {
+            throw TmdbUnavailableException("O TMDB enviou uma resposta inválida. Tente novamente.")
+        } catch (_: NoSuchElementException) {
+            throw TmdbUnavailableException("O TMDB enviou uma resposta vazia. Tente novamente.")
         }
     }
 

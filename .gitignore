@@ -39,3 +39,23 @@ out/
 
 ### Kotlin ###
 .kotlin
+.env
+.env.local
+data/
+.tools/
+.run/
+web/node_modules/
+web/.next/
+web/coverage/
+web/playwright-report/
+web/test-results/
+web/*.tsbuildinfo
+mobile/.dart_tool/
+mobile/.flutter-plugins-dependencies
+mobile/android/local.properties
+mobile/android/key.properties
+mobile/**/*.jks
+mobile/**/*.keystore
+mobile/ios/Flutter/Generated.xcconfig
+mobile/ios/Flutter/flutter_export_environment.sh
+mobile/ios/Pods/

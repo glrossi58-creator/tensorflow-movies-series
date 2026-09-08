@@ -32,12 +32,12 @@ class TensorFlowRecommendationModel(
 ) {
     private val directory = Path.of(modelDirectory)
 
-    fun train(examples: List<LabeledExample>): TrainedRecommendationModel {
+    fun train(examples: List<LabeledExample>, validationExamples: List<LabeledExample>? = null): TrainedRecommendationModel {
         require(examples.isNotEmpty()) { "Dataset vazio." }
         val shuffled = examples.shuffled(Random(seed))
         val validationSize = if (examples.size > 4) maxOf(1, examples.size / 5) else 0
-        val validation = shuffled.take(validationSize)
-        val training = shuffled.drop(validationSize).ifEmpty { shuffled }
+        val validation = validationExamples ?: shuffled.take(validationSize)
+        val training = if (validationExamples != null) shuffled else shuffled.drop(validationSize).ifEmpty { shuffled }
 
         Graph().use { graph ->
             val tf = Ops.create(graph)
@@ -83,6 +83,13 @@ class TensorFlowRecommendationModel(
     }
 
     fun save(userId: Long, model: TrainedRecommendationModel) {
+        saveTo(path(userId), model)
+    }
+
+    fun path(userId: Long): Path = directory.resolve("user-$userId.properties")
+    fun versionPath(userId: Long, version: Int): Path = directory.resolve("user-$userId-v$version.properties")
+
+    fun saveTo(file: Path, model: TrainedRecommendationModel) {
         Files.createDirectories(directory)
         val content = buildString {
             appendLine("weights=${model.weights.joinToString(",")}")
@@ -92,11 +99,20 @@ class TensorFlowRecommendationModel(
             appendLine("trainingSamples=${model.trainingSamples}")
             appendLine("validationSamples=${model.validationSamples}")
         }
-        Files.writeString(directory.resolve("user-$userId.properties"), content)
+        val temporary = Files.createTempFile(directory, "weights-", ".tmp")
+        Files.writeString(temporary, content)
+        try {
+            Files.move(temporary, file, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+            Files.move(temporary, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 
     fun load(userId: Long): TrainedRecommendationModel? {
-        val file = directory.resolve("user-$userId.properties")
+        return loadFrom(path(userId))
+    }
+
+    fun loadFrom(file: Path): TrainedRecommendationModel? {
         if (!Files.exists(file)) return null
         val values = Files.readAllLines(file).associate { line -> line.substringBefore('=') to line.substringAfter('=') }
         val weights = values.getValue("weights").split(',').map(String::toFloat).toFloatArray()

@@ -17,21 +17,11 @@ class PgVectorService(
     }
 
     suspend fun refreshUser(userId: Long, ratings: List<Rating>, signals: Collection<ContentSignals>) {
-        val byId = signals.associateBy { it.content.id }
-        val directRatings = ratings.filter { it.targetType.isContent && it.contentId in byId }
-        if (directRatings.isEmpty()) return
-
-        val result = FloatArray(ContentEmbeddingGenerator.DIMENSIONS)
-        var totalWeight = 0.0
-        directRatings.forEach { rating ->
-            val weight = (normalizer.normalize(rating.value) - 0.5) * 2.0
-            val embedding = generator.generate(requireNotNull(byId[rating.contentId]))
-            result.indices.forEach { result[it] += (embedding[it] * weight).toFloat() }
-            totalWeight += abs(weight)
-        }
-        if (totalWeight == 0.0) return
-        result.indices.forEach { result[it] = (result[it] / totalWeight).toFloat() }
-        saveUserEmbedding(userId, result)
+        val result = UserEmbeddingBuilder(generator, normalizer).build(ratings, signals)
+        if (result == null) {
+            databaseClient.sql("UPDATE app_user SET embedding = NULL WHERE id = :id")
+                .bind("id", userId).fetch().rowsUpdated().awaitSingleOrNull()
+        } else saveUserEmbedding(userId, result)
     }
 
     suspend fun similarities(userId: Long): Map<Long, Double> = databaseClient.sql(
@@ -62,5 +52,8 @@ class PgVectorService(
             .fetch().rowsUpdated().awaitSingleOrNull()
     }
 
-    private fun FloatArray.toVectorLiteral(): String = joinToString(prefix = "[", postfix = "]")
+    private fun FloatArray.toVectorLiteral(): String {
+        require(size == 8 && all { it.isFinite() }) { "Embedding exige 8 valores finitos." }
+        return joinToString(prefix = "[", postfix = "]")
+    }
 }

@@ -40,6 +40,12 @@ class R2dbcCatalogImportAdapter(
         replaceRelations("content_genre", "genre_id", contentId, genreIds)
         replaceRelations("content_actor", "person_id", contentId, actorIds)
         replaceRelations("content_director", "person_id", contentId, directorIds)
+        actorIds.forEachIndexed { order, id ->
+            databaseClient.sql("UPDATE content_actor SET cast_order=:position WHERE content_id=:content AND person_id=:person")
+                .bind("position", order).bind("content", contentId).bind("person", id).fetch().rowsUpdated().awaitSingle()
+            saveRole(id, "ACTOR")
+        }
+        directorIds.forEach { saveRole(it, if (content.type == ContentType.MOVIE) "DIRECTOR" else "CREATOR") }
         pgVectorService.saveContentEmbedding(
             contentId,
             embeddingGenerator.generate(
@@ -80,6 +86,11 @@ class R2dbcCatalogImportAdapter(
         }
         .one()
         .awaitSingle()
+
+    private suspend fun saveRole(personId: Long, role: String) {
+        databaseClient.sql("INSERT INTO person_role(person_id,role) VALUES (:id,:role) ON CONFLICT DO NOTHING")
+            .bind("id", personId).bind("role", role).fetch().rowsUpdated().awaitSingle()
+    }
 
     private suspend fun upsertGenre(genre: Genre): Long = databaseClient.sql(
         """

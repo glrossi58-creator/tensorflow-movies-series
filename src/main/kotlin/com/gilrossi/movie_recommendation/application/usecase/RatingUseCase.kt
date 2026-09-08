@@ -33,18 +33,22 @@ class RatingUseCase(
     private val personRepository: PersonRepository,
     private val genreRepository: GenreRepository,
     private val normalizer: RatingNormalizer,
-    private val eventPublisher: RatingEventPublisher
+    private val eventPublisher: RatingEventPublisher,
+    private val profile: com.gilrossi.movie_recommendation.recommendation.RatingProfileService,
+    private val roles: com.gilrossi.movie_recommendation.discovery.LocalDiscoveryRepository
 ) {
     suspend fun list(userId: Long): List<RatingResponse> {
         requireUser(userId)
         return ratingRepository.findAllByUserId(userId).map(::toResponse).toList()
     }
 
+    @org.springframework.transaction.annotation.Transactional
     suspend fun rate(userId: Long, request: RatingRequest): RatingResponse {
         requireUser(userId)
         validateTarget(request)
         normalizer.normalize(request.value)
         val existing = findExisting(userId, request)
+        if (existing?.value == request.value) return toResponse(existing)
         val now = Instant.now()
         val candidate = Rating(
             id = existing?.id,
@@ -63,18 +67,21 @@ class RatingUseCase(
             val concurrent = findExisting(userId, request) ?: throw RatingNotFoundException()
             ratingRepository.save(candidate.copy(id = concurrent.id, createdAt = concurrent.createdAt))
         }
+        profile.refresh(userId)
         eventPublisher.publish(
             RatingEvent(UUID.randomUUID(), requireNotNull(saved.id), userId, saved.targetType, saved.targetId(), saved.value, now)
         )
         return toResponse(saved)
     }
 
+    @org.springframework.transaction.annotation.Transactional
     suspend fun delete(userId: Long, ratingId: Long) {
         requireUser(userId)
         val rating = ratingRepository.findById(ratingId)
             ?.takeIf { it.userId == userId }
             ?: throw RatingNotFoundException()
         ratingRepository.delete(rating)
+        profile.refresh(userId)
     }
 
     private suspend fun validateTarget(request: RatingRequest) {
@@ -86,6 +93,7 @@ class RatingUseCase(
             }
             request.targetType.isPerson -> {
                 if (!personRepository.existsById(request.targetId)) throw PersonNotFoundException()
+                require(request.targetType in roles.roles(request.targetId)) { "Este papel não foi confirmado para esta pessoa." }
             }
             else -> {
                 if (!genreRepository.existsById(request.targetId)) throw GenreNotFoundException()

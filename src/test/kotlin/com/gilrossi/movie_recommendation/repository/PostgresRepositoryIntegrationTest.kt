@@ -128,6 +128,12 @@ class PostgresRepositoryIntegrationTest @Autowired constructor(
             registry.add("spring.datasource.url") { "jdbc:postgresql://${postgres.host}:${postgres.getMappedPort(5432)}/movie_recommendation_test" }
             registry.add("spring.datasource.username") { "postgres" }
             registry.add("spring.datasource.password") { "postgres" }
+            registry.add("spring.flyway.url") { "jdbc:postgresql://${postgres.host}:${postgres.getMappedPort(5432)}/movie_recommendation_test" }
+            registry.add("spring.flyway.user") { "postgres" }
+            registry.add("spring.flyway.password") { "postgres" }
+            registry.add("recommendation.ml.model-directory") { "./build/integration-models" }
+            registry.add("recommendation.ml.auto-train-enabled") { "false" }
+            registry.add("recommendation.ml.auto-check-ms") { "3600000" }
             registry.add("app.kafka.enabled") { "false" }
         }
     }

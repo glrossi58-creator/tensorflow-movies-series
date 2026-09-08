@@ -1,0 +1,22 @@
+'use client';
+import Link from 'next/link';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Sparkles, ArrowRight, Check } from 'lucide-react';
+import { api } from '@/lib/api';
+import type { ModelStatus } from '@/lib/types';
+import { useProfile } from './providers';
+import { ErrorNotice, Skeleton } from './ui';
+export const modelLabels: Record<ModelStatus['status'], string> = { COLLECTING_DATA: 'Conhecendo seu gosto', READY: 'Pronto para experimentar', TRAINING: 'Treinando modelo…', TRAINED: 'Modelo atualizado', DIRTY: 'Novas preferências', ERROR: 'Treino precisa de atenção' };
+export function useModelStatus() { const { profile } = useProfile(); return useQuery({ queryKey: ['user', profile.id, 'model'], queryFn: ({ signal }) => api<ModelStatus>(`/users/${profile.id}/model/status`, { signal }), refetchInterval: 5000 }); }
+export function ModelProgress({ status }: { status: ModelStatus }) {
+  const target = status.directRatingCount < status.minimumDirectRatings ? status.minimumDirectRatings : status.recommendedDirectRatings;
+  return <div className="model-progress"><div className="progress-numbers"><strong>{status.directRatingCount} <span>/ {target}</span></strong><span>{modelLabels[status.status]}</span></div><progress aria-label="Progresso de avaliações diretas" value={Math.min(status.directRatingCount, target)} max={target} /><p>{status.directRatingCount < status.minimumDirectRatings ? `Faltam ${status.minimumDirectRatings - status.directRatingCount} para liberar treinamento.` : status.directRatingCount < status.recommendedDirectRatings ? 'Você já pode treinar um modelo experimental.' : 'Base inicial recomendada atingida.'}</p><small>Mínimo {status.minimumDirectRatings} · Recomendado {status.recommendedDirectRatings} filmes ou séries</small></div>;
+}
+export function TrainingButton({ status, pending, train }: { status: ModelStatus; pending: boolean; train: () => void }) { return <button className="button" onClick={train} disabled={!status.canTrain || pending || status.status === 'TRAINING'}><Sparkles size={18} />{pending || status.status === 'TRAINING' ? 'Treinando modelo…' : 'Treinar agora'}</button>; }
+export function ModelPage() {
+  const { profile } = useProfile();
+  const query = useModelStatus();
+  const client = useQueryClient();
+  const train = useMutation({ mutationFn: () => api(`/recommendations/users/${profile.id}/train`, { method: 'POST' }), onSettled: () => { void client.invalidateQueries({ queryKey: ['user', profile.id] }); } });
+  return <><div className="page-heading"><p className="eyebrow">APRENDE COM VOCÊ</p><h1>Modelo de {profile.name}</h1><p>Suas escolhas constroem recomendações cada vez mais pessoais.</p></div>{query.isPending ? <Skeleton /> : query.error ? <ErrorNotice message={query.error.message} retry={() => void query.refetch()} /> : <><div className="model-layout"><section className="panel model-panel"><div className="section-heading"><h2>Seu ponto de partida</h2><Sparkles className="purple" /></div><ModelProgress status={query.data} /><div className="actions"><TrainingButton status={query.data} pending={train.isPending} train={() => train.mutate()} /><Link className="button subtle" href="/quick">Continuar avaliando<ArrowRight size={16} /></Link></div>{train.isSuccess && <p role="status" className="success"><Check size={16} />Modelo atualizado.</p>}{train.error && <ErrorNotice message={train.error.message} />}{query.data.lastError && <ErrorNotice message={query.data.lastError} />}</section><section className="panel"><h2>Último treinamento</h2><dl className="metrics"><div><dt>Ratings utilizados</dt><dd>{query.data.ratingsUsedInLastTraining}</dd></div><div><dt>Novos desde o treino</dt><dd>{query.data.newRatingsSinceLastTraining}</dd></div><div><dt>Último treino</dt><dd>{query.data.trainedAt ? new Date(query.data.trainedAt).toLocaleString('pt-BR') : 'Ainda não treinado'}</dd></div><div><dt>Train loss</dt><dd>{query.data.trainLoss?.toFixed(4) ?? '—'}</dd></div><div><dt>Validation loss</dt><dd>{query.data.validationLoss?.toFixed(4) ?? '—'}</dd></div><div><dt>Versão do modelo</dt><dd>{query.data.modelVersion || '—'}</dd></div></dl></section></div><p className="notice">O treino é individual. Depois do primeiro modelo, o retreino automático considera 10 novos filmes ou séries avaliados. Você controla essa opção nas <Link href="/settings">configurações</Link>.</p></>}</>;
+}

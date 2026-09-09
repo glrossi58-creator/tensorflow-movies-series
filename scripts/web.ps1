@@ -1,6 +1,8 @@
-param([ValidateSet('install','lint','test','build','dev','start','e2e')][string]$Action = 'dev', [string]$Hostname = '0.0.0.0')
+﻿param([ValidateSet('install','lint','test','build','dev','start','e2e')][string]$Action = 'dev', [string]$Hostname = '0.0.0.0')
 . "$PSScriptRoot/common.ps1"
 Initialize-Toolchain
+$backendToken = $env:TMDB_READ_ACCESS_TOKEN
+$env:TMDB_READ_ACCESS_TOKEN = $null
 Push-Location (Join-Path $script:ProjectRoot 'web')
 try {
     switch ($Action) {
@@ -10,4 +12,7 @@ try {
         'e2e' { Invoke-Checked npm.cmd @('run','test:e2e') }
         default { Invoke-Checked npm.cmd @('run',$Action) }
     }
-} finally { Pop-Location }
+} finally {
+    Pop-Location
+    $env:TMDB_READ_ACCESS_TOKEN = $backendToken
+}

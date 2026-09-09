@@ -82,7 +82,10 @@ class ModelLifecycleService(
     suspend fun trainedModel(userId: Long): TrainedRecommendationModel? {
         val state = status(userId)
         val path = state.modelPath ?: return null
-        return try { withContext(Dispatchers.IO) { tensorflow.loadFrom(Path.of(path)) } }
+        return try {
+            withContext(Dispatchers.IO) { tensorflow.loadFrom(Path.of(path)) }
+                ?: throw IllegalStateException("Saved model is missing")
+        }
         catch (e: Exception) {
             recordError(userId, "Não foi possível ler o modelo salvo. Treine novamente.")
             logger.warn("Cannot read saved model for user {}", userId)

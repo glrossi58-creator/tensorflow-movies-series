@@ -1,4 +1,4 @@
-param([string]$ApiBaseUrl, [switch]$AppBundle)
+﻿param([string]$ApiBaseUrl, [switch]$AppBundle)
 . "$PSScriptRoot/common.ps1"
 Initialize-Toolchain
 Push-Location $script:ProjectRoot

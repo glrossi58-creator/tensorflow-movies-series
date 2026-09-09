@@ -38,7 +38,7 @@ android {
     namespace = "com.gilrossi.movie_recommendation"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
-    sourceSets.getByName("main").res.srcDir(networkResources)
+    sourceSets.getByName("main").res.srcDir(networkResources.get().asFile)
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

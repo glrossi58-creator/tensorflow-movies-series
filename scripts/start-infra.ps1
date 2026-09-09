@@ -1,4 +1,4 @@
-param([switch]$WithoutKafka)
+﻿param([switch]$WithoutKafka)
 . "$PSScriptRoot/common.ps1"
 Import-ProjectEnv
 Push-Location $script:ProjectRoot

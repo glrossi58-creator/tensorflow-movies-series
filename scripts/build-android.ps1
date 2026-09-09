@@ -1,4 +1,4 @@
-param([string]$ApiBaseUrl, [switch]$AppBundle, [switch]$SkipChecks)
+﻿param([string]$ApiBaseUrl, [switch]$AppBundle, [switch]$SkipChecks)
 . "$PSScriptRoot/common.ps1"
 Initialize-Toolchain
 if (-not $ApiBaseUrl) { $ApiBaseUrl = "http://$(Get-LocalIPv4):8080" }

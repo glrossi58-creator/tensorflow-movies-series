@@ -26,7 +26,8 @@ class RatingUseCaseTest {
     private val publisher = mockk<RatingEventPublisher>(relaxed = true)
     private val profile = mockk<com.gilrossi.movie_recommendation.recommendation.RatingProfileService>(relaxed = true)
     private val roles = mockk<com.gilrossi.movie_recommendation.discovery.LocalDiscoveryRepository>()
-    private val useCase = RatingUseCase(ratings, users, contents, people, genres, RatingNormalizer(), publisher, profile, roles)
+    private val writes = mockk<com.gilrossi.movie_recommendation.repository.RatingWriteRepository>()
+    private val useCase = RatingUseCase(ratings, users, contents, people, genres, RatingNormalizer(), publisher, profile, roles, writes)
 
     @Test
     fun `creates actor rating and publishes event with normalized response`() = runTest {
@@ -34,7 +35,7 @@ class RatingUseCaseTest {
         coEvery { people.existsById(9) } returns true
         coEvery { roles.roles(9) } returns setOf(RatingTargetType.ACTOR, RatingTargetType.CREATOR)
         coEvery { ratings.findByUserIdAndTargetTypeAndPersonId(1, RatingTargetType.ACTOR, 9) } returns null
-        coEvery { ratings.save(any()) } answers { firstArg<Rating>().copy(id = 33) }
+        coEvery { writes.upsert(any()) } answers { firstArg<Rating>().copy(id = 33) }
 
         val response = useCase.rate(1, RatingRequest(RatingTargetType.ACTOR, 9, 4))
 
@@ -48,7 +49,7 @@ class RatingUseCaseTest {
         coEvery { people.existsById(9) } returns true
         coEvery { roles.roles(9) } returns setOf(RatingTargetType.ACTOR, RatingTargetType.CREATOR)
         coEvery { ratings.findByUserIdAndTargetTypeAndPersonId(1, RatingTargetType.CREATOR, 9) } returns null
-        coEvery { ratings.save(any()) } answers { firstArg<Rating>().copy(id = 34) }
+        coEvery { writes.upsert(any()) } answers { firstArg<Rating>().copy(id = 34) }
 
         useCase.rate(1, RatingRequest(RatingTargetType.CREATOR, 9, 2))
 

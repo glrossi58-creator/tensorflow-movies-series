@@ -1,4 +1,4 @@
-param([ValidateSet('get','analyze','test','devices')][string]$Action = 'analyze')
+﻿param([ValidateSet('get','analyze','test','devices')][string]$Action = 'analyze')
 . "$PSScriptRoot/common.ps1"
 Initialize-Toolchain
 Push-Location (Join-Path $script:ProjectRoot 'mobile')

@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $script:ProjectRoot = Split-Path -Parent $PSScriptRoot
 
 function Import-ProjectEnv {

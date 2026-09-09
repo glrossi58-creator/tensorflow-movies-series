@@ -92,6 +92,17 @@ class ProductIntegrationTest @Autowired constructor(
         assertEquals(3, rate.list(user).size)
     }
 
+    @Test fun `simultaneous first autosaves preserve a single rating`() = runBlocking {
+        val user = user(); val c = content()
+        coroutineScope {
+            val first = async { rate.rate(user, RatingRequest(RatingTargetType.MOVIE,c.id!!,4)) }
+            val second = async { rate.rate(user, RatingRequest(RatingTargetType.MOVIE,c.id!!,5)) }
+            assertEquals(first.await().id, second.await().id)
+        }
+        assertEquals(1,rate.list(user).size)
+        assertEquals(1,models.status(user).directRatingCount)
+    }
+
     @Test fun `scale and mismatched content types are rejected without writes`() = runBlocking {
         val user = user(); val c = content()
         listOf(0,6).forEach { value -> assertFailsWith<IllegalArgumentException> { rate.rate(user,RatingRequest(RatingTargetType.MOVIE,c.id!!,value)) } }
@@ -157,6 +168,18 @@ class ProductIntegrationTest @Autowired constructor(
         assertFailsWith<ConflictException> { models.train(user) }
         assertEquals("TRAINING", models.status(user).status)
         assertFalse(models.status(user).canTrain)
+    }
+
+    @Test fun `missing saved weights mark an error and permit manual recovery`() = runBlocking {
+        val user = user(); direct(user,8)
+        models.train(user)
+        db.sql("UPDATE user_model_state SET model_path=:path WHERE user_id=:id")
+            .bind("path", "./build/nonexistent-${UUID.randomUUID()}.json").bind("id", user).fetch().rowsUpdated().awaitSingle()
+        assertNull(models.trainedModel(user))
+        assertEquals("ERROR", models.status(user).status)
+        assertTrue(models.status(user).canTrain)
+        models.train(user)
+        assertEquals("TRAINED", models.status(user).status)
     }
 
     @Test fun `individual cold start and joint recommendations exclude watched and do not train`() = runBlocking {

@@ -1,159 +1,125 @@
-# Movie Recommendation
+# LUME · Movie Recommendation
 
-API reativa e multiusuário para importar filmes e séries do TMDB, registrar preferências explícitas e recomendar o que assistir individualmente ou em grupo. O projeto preserva conteúdos antigos sem `tmdb_id` e identifica imports pela chave lógica `(tmdb_id, type)`.
+Um próximo favorito para cada gosto. Gil usa a Web; Aliny usa o Android. Cada perfil mantém suas avaliações e seu próprio modelo. Em **Para nós**, o backend combina as afinidades dos participantes sem criar um terceiro modelo.
 
-## Arquitetura e stack
+O produto inclui seleção/criação de perfil, busca de filmes, séries, pessoas e gêneros, importação TMDB, avaliações com autosave, avaliação rápida, histórico, preferências de gênero, acompanhamento/treinamento do modelo e recomendações individuais e conjuntas.
+
+**Comece pelo [runbook para Windows 11](docs/RUNBOOK.md).** Resultados executados: [docs/VALIDATION.md](docs/VALIDATION.md).
+
+## Arquitetura
 
 ```mermaid
 flowchart LR
-    TMDB --> ImportUseCase
-    HTTP[Controllers WebFlux] --> UC[Use cases]
-    UC --> Ports
-    Ports --> R2DBC[(PostgreSQL + pgvector)]
-    UC --> Features[Features + baseline]
-    Features --> TF[TensorFlow Java]
-    R2DBC --> Features
-    Ratings[Rating 1..5] --> Kafka[rating.created]
-    Kafka --> Profile[Perfil / embedding / modelo]
-    Profile --> R2DBC
+    Web[Next.js · Gil] --> API[Spring Boot / Kotlin · REST]
+    App[Flutter · Aliny] --> API
+    API --> DB[(PostgreSQL 16 / pgvector)]
+    API --> TF[TensorFlow Java · modelo por perfil]
+    API --> TMDB[TMDB]
+    API --> Outbox[Outbox transacional]
+    Outbox --> Kafka[Kafka · rating.created]
+    Kafka --> Perfil[Atualização de perfil / embedding]
+    Perfil --> DB
 ```
 
-- Java 21, Kotlin e Spring Boot 4.1.1
-- Spring WebFlux + Kotlin Coroutines, sem `block()` nos fluxos reativos
-- Spring Data R2DBC para a aplicação; JDBC é usado somente pelo Flyway na inicialização
-- PostgreSQL 16 + pgvector
-- TensorFlow Java 1.1.0 (última linha com binário Windows x86-64)
-- Kafka 4.1, Gradle Kotlin DSL, Docker Compose e Testcontainers
-
-O fluxo principal segue `Controller → Use Case → Port → Adapter`. DTOs do TMDB são convertidos por mappers antes de persistir modelos internos.
-
-## Pré-requisitos
-
-- JDK 21
-- Docker Desktop (Linux containers)
-- PowerShell no Windows 11
-- Token de leitura da [API do TMDB](https://developer.themoviedb.org/docs/getting-started)
-
-Copie `.env.example` para `.env` ou exporte as variáveis no shell. Nunca versione o valor real do token.
-
-| Variável | Obrigatória | Padrão/uso |
-|---|---:|---|
-| `TMDB_READ_ACCESS_TOKEN` | Para endpoints TMDB | Sem padrão; a API retorna erro de configuração sem ela |
-| `DB_PASSWORD` | Não, em dev | `postgres` |
-| `DB_USERNAME` | Não | `postgres` |
-| `DB_R2DBC_URL` | Não | `r2dbc:postgresql://localhost:5432/movie_recommendation` |
-| `DB_JDBC_URL` | Não | URL JDBC equivalente, usada pelo Flyway |
-| `KAFKA_ENABLED` | Não | `false`; use `true` com o container Kafka ativo |
-| `KAFKA_BOOTSTRAP_SERVERS` | Não | `localhost:9092` |
-| `MODEL_DIRECTORY` | Não | `./data/models` |
-
-No PowerShell:
-
-```powershell
-$env:TMDB_READ_ACCESS_TOKEN = "seu-token"
-$env:DB_PASSWORD = "postgres"
-$env:KAFKA_ENABLED = "true"
-docker compose up -d
-.\gradlew.bat bootRun
-```
-
-A API inicia em `http://localhost:8080`. Para encerrar a infraestrutura, use `docker compose down`. O volume `postgres_data` é preservado; não use `down -v` se quiser manter os dados.
-
-## Banco e migrations
-
-Flyway executa `src/main/resources/db/migration`. O baseline é conscientemente configurado como versão `0`: em um schema antigo não vazio ele cria a tabela de histórico e aplica migrations aditivas; em banco novo cria todo o schema. Não há `DROP TABLE`.
-
-As migrations incluem catálogo, usuários, ratings, relações, extensão `vector`, embeddings de dimensão 8 e outbox reservado para evolução da entrega transacional. A imagem Docker já contém pgvector.
-
-## Endpoints principais
-
-### Conteúdo e TMDB
-
-| Método | Caminho | Função |
-|---|---|---|
-| `GET` | `/contents` | Lista conteúdo |
-| `GET` | `/contents/{id}` | Busca por ID local |
-| `POST` | `/contents` | Cria (`201`) |
-| `PUT` | `/contents/{id}` | Atualiza |
-| `DELETE` | `/contents/{id}` | Remove (`204`) |
-| `GET` | `/contents/search?title=Matrix` | Busca filme no TMDB |
-| `GET` | `/contents/tmdb/{tmdbId}/details` | Detalhes externos de filme |
-| `GET` | `/contents/tmdb/{tmdbId}/credits` | Créditos externos de filme |
-| `POST` | `/contents/tmdb/{tmdbId}/import` | Importa/atualiza filme |
-| `POST` | `/contents/tmdb/series/{tmdbId}/import` | Importa/atualiza série |
-
-Filmes usam details + credits; séries usam `/tv/{id}` + `/tv/{id}/aggregate_credits`. A regra de aplicação ordena o cast por `order` e persiste somente os dez atores principais. `content_director` guarda diretores para filmes e creators para séries. Imports usam transação R2DBC e UPSERT, atualizam campos mutáveis e relações e preservam o ID local.
-
-### Usuários e ratings
-
-| Método | Caminho |
+| Parte | Implementação |
 |---|---|
-| `GET/POST` | `/users` |
-| `GET/PUT/DELETE` | `/users/{id}` |
-| `GET` | `/users/{userId}/ratings` |
-| `POST/PUT` | `/users/{userId}/ratings` |
-| `DELETE` | `/users/{userId}/ratings/{ratingId}` |
+| Backend na raiz | Java 21, Kotlin, Spring Boot 4.1.1, WebFlux, Coroutines, R2DBC, Flyway, Gradle Kotlin DSL |
+| Machine learning | TensorFlow Java **1.1.0**, mantendo o binário Windows x86-64 existente |
+| Infraestrutura | PostgreSQL 16 + pgvector, broker Kafka 4.1, Docker Compose |
+| `web/` | Next.js 16.3.4, TypeScript, App Router, Tailwind, TanStack Query |
+| `mobile/` | Flutter 3.47.2 / Dart, Material 3, Riverpod, Dio, go_router |
+| `scripts/` | Inicialização, parada e builds em PowerShell |
 
-Exemplo:
+Toda regra de rating, normalização, features e recomendação fica no backend. Os clientes recebem scores e notas normalizadas da API. O token TMDB fica exclusivamente no servidor.
 
-```json
-{
-  "targetType": "ACTOR",
-  "targetId": 42,
-  "value": 5
-}
-```
+## Perfis e experiência
 
-`targetType` aceita `MOVIE`, `SERIES`, `ACTOR`, `DIRECTOR`, `CREATOR` ou `GENRE`. A mesma pessoa pode ter notas distintas em cada papel. Há unicidade no banco por usuário, papel e alvo. A normalização vive em um único componente e aplica `(value - 1) / (5 - 1)`: `1→0`, `2→0.25`, `3→0.5`, `4→0.75`, `5→1`.
+A primeira tela pergunta **Quem está avaliando?**. A migration adiciona Gil e Aliny apenas quando esses nomes ainda não existem. Outros perfis podem ser criados pela interface. A seleção persiste localmente e o perfil ativo permanece visível. Os clientes usam os IDs retornados pela API, inclusive para The Matrix e outros imports.
 
-### Recomendações
+A identidade LUME usa preto e roxo, navegação simples, posters sob demanda, cache, skeletons, alvos de toque grandes e estrelas com nomes acessíveis. Web e mobile oferecem Início, Busca, Avaliação de conteúdo/pessoa, Seus gostos, Avaliação rápida, Minhas avaliações, Meu modelo, Para você, Para nós e Configurações.
 
-| Método | Caminho | Função |
+Nesta fase, os perfis são uma conveniência para duas pessoas numa rede confiável. Não há autenticação: quem alcança a API pode selecionar qualquer perfil. Uma publicação pública exige controle de acesso, além de HTTPS.
+
+## Busca e catálogo
+
+`GET /discovery/search?q=...` pesquisa o banco primeiro. Resultados locais aparecem como **No catálogo**. Se não houver, o backend consulta o TMDB e os clientes oferecem **Importar e avaliar**. Filtros: MOVIE, SERIES, PERSON e GENRE. A busca possui debounce, cancelamento e cache nos clientes.
+
+Imports de filmes/séries permanecem idempotentes por `(tmdb_id, type)`. Conteúdos antigos sem `tmdb_id` continuam disponíveis. Pessoas podem ter notas distintas como ACTOR, DIRECTOR e CREATOR. Direção exige crédito de Director; criação exige relação real de criação de série. Writer não é convertido em Creator. A tela da pessoa permite atualizar foto e papéis comprovados pelo TMDB.
+
+A tela de conteúdo reúne sua nota, gêneros, os dez atores persistidos, direção e creators numa resposta consolidada. Falhas externas têm mensagens compreensíveis e não impedem o uso do catálogo local.
+
+## Avaliações e normalização
+
+Todas as seis categorias usam notas de 1 a 5. A única implementação de normalização é `RatingNormalizer` no backend:
+
+| Nota | Significado | `(value - 1) / 4` |
 |---|---|---|
-| `GET` | `/recommendations/users/{userId}?limit=20` | Recomendação individual |
-| `POST` | `/recommendations/users/{userId}/train` | Treino explícito do modelo |
-| `POST` | `/recommendations/joint` | Recomendação conjunta |
+| 1 | Não gosto | 0,00 |
+| 2 | Gosto pouco | 0,25 |
+| 3 | Neutro | 0,50 |
+| 4 | Gosto | 0,75 |
+| 5 | Gosto muito | 1,00 |
 
-Corpo da recomendação conjunta:
+Ausência de nota é `null`; valores fora da escala retornam HTTP 400. Um toque muda a estrela imediatamente, agrupa alterações rápidas e salva. Em falha, a escolha permanece localmente com **Tentar novamente**. O endpoint batch parcial é transacional e reutiliza as mesmas regras.
 
-```json
-{ "userIds": [1, 2], "limit": 20 }
-```
+Na avaliação rápida, filmes e séries alternam com diversidade de gêneros. Conteúdos já avaliados pelo perfil são excluídos. **Não assisti** apenas pula; nunca cria nota. Populares dependem da configuração TMDB.
 
-Conteúdos já avaliados são removidos. Cada resposta traz conteúdo, score `0..1`, estratégia e motivos explicáveis.
+## TensorFlow: 8, 25 e retreino
 
-## Features, baseline e TensorFlow
+| Ratings diretos MOVIE/SERIES | Experiência |
+|---|---|
+| 0–7 | COLLECTING_DATA; completar 8 para liberar treinamento |
+| 8–24 | Treino experimental disponível; progresso para 25 |
+| 25+ | Base inicial recomendada atingida |
 
-Cada exemplo representa `User + Content`. As oito features, todas em `0..1`, são:
+ACTOR, DIRECTOR, CREATOR e GENRE alimentam features; nunca aumentam essa contagem. O treinamento mantém oito features em 0..1, separa treino/validação com seed 42 antes de construir o dataset e exclui o próprio label e os labels de validação das features de treino.
 
-1. afinidade com gêneros do conteúdo;
-2. afinidade com os dez atores principais;
-3. afinidade com diretor (filme) ou creator (série);
-4. média de ratings diretos de filmes;
-5. média de ratings diretos de séries;
-6. média do histórico direto;
-7. popularidade normalizada entre usuários;
-8. similaridade do embedding pgvector.
+TensorFlow Java executa treinamento real. Pesos e métricas ficam em arquivos versionados por usuário e em metadados no PostgreSQL. A tela mostra train loss, validation loss, datas, versão, amostras usadas e avaliações novas. Um lock no banco impede treinos simultâneos do mesmo perfil.
 
-O label é o rating direto normalizado do conteúdo. Ao construir uma linha, o próprio rating-label é removido do histórico para evitar vazamento. O split treino/validação e a inicialização usam seed `42`.
+Após o primeiro treino, alterar preferências marca o modelo DIRTY. Com auto-treino habilitado, **dez novos ratings diretos** disparam retreino no verificador periódico. Editar repetidamente uma mesma nota não conta como dez novos ratings. Não há treinamento completo por clique nem por leitura de recomendações. Estados: COLLECTING_DATA, READY, TRAINING, TRAINED, DIRTY e ERROR. Veja [o desenho do modelo](docs/MODEL.md).
 
-O baseline usa pesos configuráveis em `application.properties`: gênero `0.30`, ator `0.20`, diretor/creator `0.20`, filme `0.15` e série `0.15`. Sem ratings, combina baseline neutro e popularidade; com poucos ratings, usa baseline + pgvector. A partir de oito ratings diretos, treina regressão logística no grafo do TensorFlow com gradient descent, registra loss de treino/validação e persiste pesos por usuário em `MODEL_DIRECTORY`.
+## pgvector e Kafka
 
-Embeddings de conteúdo são vetores determinísticos normalizados derivados de tipo, gêneros, atores e diretor/creator. O embedding do usuário é a média ponderada dos conteúdos avaliados. pgvector calcula similaridade cosseno e entra como sinal complementar, não substitui o recommender.
+Embeddings permanecem `vector(8)`. Salvar preferências recalcula o vetor do perfil; similaridade cosseno é um sinal complementar ao TensorFlow. Preferências neutras não deixam um vetor antigo ativo.
 
-Na recomendação conjunta, primeiro se obtém o score individual. A agregação usa 70% de média harmônica e 30% do menor score, reduzindo opções excelentes para uma pessoa e ruins para outra.
+Com Kafka habilitado, a mesma transação do rating registra um evento na outbox. O publicador envia `rating.created` com chave `userId`, registra confirmação e tenta novamente quando necessário. O consumer atualiza perfil/embedding sem criar outro rating. O processamento tolera entrega repetida. Com `KAFKA_ENABLED=false`, persistência, perfil e recomendações continuam funcionando.
 
-## Kafka
+## Recomendações
 
-Ao criar ou alterar rating, o producer publica `rating.created`, particionado por `userId`. O consumer atualiza embeddings e, havendo amostras suficientes, retreina o modelo daquele usuário. Tudo continua em um monólito modular. Kafka é opcional para desenvolvimento (`KAFKA_ENABLED=false`); o rating continua funcional e o perfil também é atualizado sob demanda ao recomendar.
+**Para você** exclui conteúdos já avaliados e mostra score, estratégia e motivos. Antes do treino, usa o baseline/cold start existente; depois usa os pesos individuais aprendidos pelo TensorFlow.
 
-## Testes e build
+**Para nós** calcula, no backend, **70% da média harmônica + 30% do menor score**, excluindo títulos avaliados por qualquer participante. Scores individuais também ficam disponíveis. O percentual representa afinidade, não uma probabilidade calibrada.
+
+## Configuração e início
+
+No diretório existente:
 
 ```powershell
-.\gradlew.bat clean test
-.\gradlew.bat build
+cd C:\dev\workspace\movie-recommendation
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+notepad .env
+# Preencha TMDB_READ_ACCESS_TOKEN somente no .env do backend.
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1 -LanWeb
 ```
 
-Em Linux/macOS, use `./gradlew`. A suíte contém testes unitários de normalização, mappers, imports, ratings, features, dataset, baseline, TensorFlow e recomendação conjunta; testes WebFlux de controllers; MockWebServer para TMDB; e Testcontainers para PostgreSQL/pgvector e Kafka. Testes de container se auto-ignoram somente quando não existe um daemon Docker acessível.
+Gil abre **http://localhost:3000**. O script imprime as URLs da API e Web na rede. Aliny usa um APK compilado para esse mesmo IPv4:
 
-O primeiro build baixa os binários nativos do TensorFlow e pode demorar. No Windows, o Gradle direciona a extração nativa dos testes para `build/tensorflow-native`.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android.ps1 -ApiBaseUrl http://IP_DO_PC:8080
+```
+
+O APK fica em `mobile/build/app/outputs/flutter-apk/app-release.apk`. Instalação, assinatura, ADB, firewall, builds manuais e iOS estão no [runbook](docs/RUNBOOK.md). A URL Web é `NEXT_PUBLIC_API_BASE_URL`; a do Flutter é `--dart-define=API_BASE_URL=...`.
+
+## Banco, testes e build
+
+Flyway preserva as migrations anteriores e adiciona `V3__profiles_discovery_and_model_state.sql`: perfis ausentes, papéis de pessoa, ordem de elenco, índices e estado/amostras do modelo. Dados legados e IDs permanecem válidos. Preserve o volume PostgreSQL e `data/models` nos backups; não recrie o schema para atualizar.
+
+Com Docker ativo e toolchains disponíveis:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-all.ps1 -ApiBaseUrl http://IP_DO_PC:8080 -AppBundle
+```
+
+Esse comando falha na primeira etapa com erro: backend clean/test/build, Web install/lint/test/build, Flutter pub/analyze/test/APK e, opcionalmente, AAB. Integrações usam containers isolados, sem modificar o histórico real. Com Docker indisponível, o JUnit pode marcar integrações como skipped; isso não é validação completa.
+
+Consulte [API](docs/API.md), [modelo](docs/MODEL.md), [Web](web/README.md), [mobile](mobile/README.md), [execução e troubleshooting](docs/RUNBOOK.md) e [evidências da entrega](docs/VALIDATION.md).

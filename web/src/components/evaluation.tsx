@@ -1,11 +1,20 @@
 'use client';
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '@/lib/api';
 import { labels, type ContentEvaluation, type PersonEvaluation, type RatedEntity } from '@/lib/types';
 import { useProfile } from './providers';
 import { AutosaveRating, Empty, ErrorNotice, Poster, Skeleton } from './ui';
+
+function RefreshPerson({ tmdbId, userId }: { tmdbId: number; userId: number }) {
+  const client = useQueryClient();
+  const refresh = useMutation({
+    mutationFn: () => api(`/discovery/import/PERSON/${tmdbId}`, { method: 'POST' }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['user', userId] }),
+  });
+  return <div className="section"><button className="button subtle" disabled={refresh.isPending} onClick={() => refresh.mutate()}>{refresh.isPending ? 'Consultando créditos…' : 'Atualizar foto e papéis do TMDB'}</button>{refresh.error && <ErrorNotice message={refresh.error.message} retry={() => refresh.mutate()} />}</div>;
+}
 
 export function EntityRatings({ title, items, userId }: { title: string; items: RatedEntity[]; userId: number }) {
   if (!items.length) return null;
@@ -25,7 +34,7 @@ export function PersonEvaluationPage({ id }: { id: number }) {
   if (query.isPending) return <Skeleton />;
   if (query.error) return <ErrorNotice message={query.error.message} retry={() => void query.refetch()} />;
   const view = query.data;
-  return <><Link href="/search" className="back-link"><ArrowLeft size={16} />Voltar à busca</Link><div className="detail-hero"><Poster title={view.person.title} path={view.person.posterPath} person /><div className="detail-copy"><p className="eyebrow">QUEM DÁ VIDA ÀS HISTÓRIAS</p><h1>{view.person.title}</h1><p className="overview">{view.person.overview || 'Cada papel tem a sua própria avaliação. Seu gosto por atuação e direção pode ser diferente.'}</p><div className="tags">{view.roles.map(r => <span key={r.targetType}>{labels[r.targetType]}</span>)}</div></div></div>{view.roles.length ? <EntityRatings title="Sua opinião em cada papel" items={view.roles} userId={profile.id} /> : <Empty title="Sem papéis de avaliação confirmados" message="As relações disponíveis ainda não confirmam atuação, direção ou criação de séries para esta pessoa." />}</>;
+  return <><Link href="/search" className="back-link"><ArrowLeft size={16} />Voltar à busca</Link><div className="detail-hero"><Poster title={view.person.title} path={view.person.posterPath} person /><div className="detail-copy"><p className="eyebrow">QUEM DÁ VIDA ÀS HISTÓRIAS</p><h1>{view.person.title}</h1><p className="overview">{view.person.overview || 'Cada papel tem a sua própria avaliação. Seu gosto por atuação e direção pode ser diferente.'}</p><div className="tags">{view.roles.map(r => <span key={r.targetType}>{labels[r.targetType]}</span>)}</div></div></div>{view.person.tmdbId && <RefreshPerson tmdbId={view.person.tmdbId} userId={profile.id} />}{view.roles.length ? <EntityRatings title="Sua opinião em cada papel" items={view.roles} userId={profile.id} /> : <Empty title="Sem papéis de avaliação confirmados" message="As relações disponíveis ainda não confirmam atuação, direção ou criação de séries para esta pessoa." />}</>;
 }
 export function GenrePreferencesPage() {
   const { profile } = useProfile();

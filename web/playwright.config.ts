@@ -1,0 +1,2 @@
+import { defineConfig, devices } from '@playwright/test';
+export default defineConfig({ testDir: './e2e', fullyParallel: false, use: { baseURL: process.env.E2E_WEB_URL || 'http://localhost:3000', channel: 'msedge', trace: 'retain-on-failure' }, projects: [{ name: 'desktop', use: { ...devices['Desktop Edge'] } }, { name: 'mobile-web', use: { ...devices['Pixel 7'], defaultBrowserType: 'chromium' } }], reporter: [['list'], ['html', { open: 'never' }]] });

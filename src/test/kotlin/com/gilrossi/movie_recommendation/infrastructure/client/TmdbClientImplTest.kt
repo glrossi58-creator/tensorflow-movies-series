@@ -74,6 +74,28 @@ class TmdbClientImplTest {
         return TmdbClientImpl(webClient, "test-token")
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = [401,403,429,500,502])
+    fun `translates authorization rate limit and upstream errors`(status: Int) {
+        server.enqueue(MockResponse().setResponseCode(status).setBody("secret upstream body"))
+        val error = assertThrows(TmdbUnavailableException::class.java) { kotlinx.coroutines.runBlocking { client().searchUniversal("Matrix",null) } }
+        org.junit.jupiter.api.Assertions.assertFalse(error.message.orEmpty().contains("secret"))
+    }
+
+    @Test fun `malformed json and missing token have friendly errors`() {
+        server.enqueue(json("{broken json"))
+        assertThrows(TmdbUnavailableException::class.java) { kotlinx.coroutines.runBlocking { client().searchUniversal("Matrix",null) } }
+        val noToken = TmdbClientImpl(WebClient.create(server.url("/").toString()), "")
+        assertThrows(com.gilrossi.movie_recommendation.exception.TmdbConfigurationException::class.java) { kotlinx.coroutines.runBlocking { noToken.searchMovie("Matrix") } }
+    }
+
+    @Test fun `parses real person credits without inventing creator role`() = runTest {
+        server.enqueue(json("""{"results":[{"id":9,"name":"Person","known_for_department":"Acting","profile_path":null}]}"""))
+        server.enqueue(json("""{"id":9,"cast":[{"id":10,"media_type":"movie"}],"crew":[{"id":12,"media_type":"tv","job":"Writer"}]}"""))
+        assertEquals("Person",client().searchUniversal("Person",com.gilrossi.movie_recommendation.discovery.DiscoveryType.PERSON).results.single().name)
+        assertEquals("Writer",client().getPersonCredits(9).crew.single().job)
+    }
+
     private fun json(body: String) = MockResponse().setResponseCode(200)
         .setHeader("Content-Type", "application/json").setBody(body)
 }

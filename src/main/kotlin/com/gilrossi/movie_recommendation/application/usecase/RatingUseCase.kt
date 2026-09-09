@@ -35,7 +35,8 @@ class RatingUseCase(
     private val normalizer: RatingNormalizer,
     private val eventPublisher: RatingEventPublisher,
     private val profile: com.gilrossi.movie_recommendation.recommendation.RatingProfileService,
-    private val roles: com.gilrossi.movie_recommendation.discovery.LocalDiscoveryRepository
+    private val roles: com.gilrossi.movie_recommendation.discovery.LocalDiscoveryRepository,
+    private val writes: com.gilrossi.movie_recommendation.repository.RatingWriteRepository
 ) {
     suspend fun list(userId: Long): List<RatingResponse> {
         requireUser(userId)
@@ -61,12 +62,7 @@ class RatingUseCase(
             createdAt = existing?.createdAt ?: now,
             updatedAt = now
         )
-        val saved = try {
-            ratingRepository.save(candidate)
-        } catch (_: DuplicateKeyException) {
-            val concurrent = findExisting(userId, request) ?: throw RatingNotFoundException()
-            ratingRepository.save(candidate.copy(id = concurrent.id, createdAt = concurrent.createdAt))
-        }
+        val saved = writes.upsert(candidate)
         profile.refresh(userId)
         eventPublisher.publish(
             RatingEvent(UUID.randomUUID(), requireNotNull(saved.id), userId, saved.targetType, saved.targetId(), saved.value, now)
